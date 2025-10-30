@@ -50,12 +50,14 @@ async def start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_cmd(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Commands:\n"
-        "/start — greet\n"
-        "/help — this help\n"
+        "/start — بزن روشن شم\n"
+        "/help — بزنی بهت میگم هر دستور چیکارم میکنه\n"
         "/join — بزن تا اد بشی تو خرج\n"
-        "/add — بزن تا یه خرجی که خودت کردی رو اضافه کنی\n"
-        
-        "More commands coming soon…"
+        "/add — بزن تا یه خرجی که خودت کردی رو اضافه کنم\n"
+        "/balance — اینو بزنی میگم کی چقدر بدهکاره کی چقدر طلبکار\n"
+        "/settle — بزن تا بهت بگم کی باید چقدر بزنه به کی\n"
+        "/reset — بزن تا کل داستان رو حذف کنم\n"
+        "ایده داری بده تا قوی تر شم"
     )
 
 
@@ -220,9 +222,21 @@ async def settle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/reset – wipe all data for this chat."""
-    # TODO
-    await update.message.reply_text("🔧 /reset not implemented yet")
+    """/reset – permanently delete all data for this chat."""
+    chat_id = update.effective_chat.id
+    if chat_id not in GROUPS:
+        await update.message.reply_text("ℹ️ Nothing to reset.")
+        return
+
+    # optional safety: require a confirmation word
+    if context.args and context.args[0].lower() == "confirm":
+        del GROUPS[chat_id]
+        await update.message.reply_text("🗑️ All data erased. Start fresh with /join!")
+    else:
+        await update.message.reply_text(
+            "⚠️ This will delete every expense and member.\n"
+            "Type:  `/reset confirm`"
+        )
 
 
 # ---------- FALLBACK ----------
