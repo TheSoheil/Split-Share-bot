@@ -61,7 +61,6 @@ async def help_cmd(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ---------- TODO: implement the 5 split commands ----------
 async def join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/join – add the sender to the current chat’s member list."""
     chat_id = update.effective_chat.id
@@ -109,8 +108,9 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     note = " ".join(context.args[1:]) or "no description"
 
     # 4. split equally among *current* members
-    members = GROUPS[chat_id]["members"]
-    split_between = list(members.keys())
+    real_members = list(GROUPS[chat_id]["members"].keys())
+    ghosts = list(GROUPS[chat_id].get("ghosts", {}).keys())
+    split_between = real_members + ghosts
     per_person = round(amount / len(split_between), 2)
 
     # 5. store expense
@@ -132,10 +132,34 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+GHOST_SEQ = 0  # global counter for unique ghost ids
+
+
+async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/invite <name>  – add a guest who isn't in the chat."""
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+
+    if chat_id not in GROUPS or user.id not in GROUPS[chat_id]["members"]:
+        await update.message.reply_text("❕ You have to /join first.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /invite <guest name>")
+        return
+
+    name = " ".join(context.args)
+    global GHOST_SEQ
+    GHOST_SEQ += 1
+    ghost_id = f"ghost_{GHOST_SEQ}"
+
+    GROUPS[chat_id].setdefault("ghosts", {})[ghost_id] = name
+    await update.message.reply_text(f"👤 Guest added: {name}")
+
+
 def _compute_balances(chat_id: int) -> dict[int, float]:
     """Return dict user_id → net balance (positive = owed, negative = owes)."""
     balances: defaultdict[int, float] = defaultdict(float)
-    members = GROUPS[chat_id]["members"]
+    members = {**GROUPS[chat_id]["members"], **GROUPS[chat_id].get("ghosts", {})}
     for exp in GROUPS[chat_id]["expenses"]:
         n = len(exp["split_between"])
         payer = exp["by"]
@@ -176,15 +200,15 @@ def _settle_plan(balances: dict[int, float]) -> list[str]:
     """Return list of 'A pays B xx.xx' strings that zero all balances."""
     # split into creditors and debtors
     creditors = [(uid, b) for uid, b in balances.items() if b > 0.01]
-    debtors   = [(uid, -b) for uid, b in balances.items() if b < -0.01]
+    debtors = [(uid, -b) for uid, b in balances.items() if b < -0.01]
 
-    creditors.sort(key=lambda x: x[1])   # smallest first
-    debtors.sort(key=lambda x: x[1])     # smallest first
+    creditors.sort(key=lambda x: x[1])  # smallest first
+    debtors.sort(key=lambda x: x[1])  # smallest first
 
     plan = []
     while creditors and debtors:
-        c_uid, c_amt = creditors.pop()      # biggest creditor
-        d_uid, d_amt = debtors.pop()        # biggest debtor
+        c_uid, c_amt = creditors.pop()  # biggest creditor
+        d_uid, d_amt = debtors.pop()  # biggest debtor
 
         pay = min(c_amt, d_amt)
         plan.append((d_uid, c_uid, pay))
@@ -234,8 +258,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🗑️ All data erased. Start fresh with /join!")
     else:
         await update.message.reply_text(
-            "⚠️ This will delete every expense and member.\n"
-            "Type:  `/reset confirm`"
+            "⚠️ This will delete every expense and member.\n" "Type:  `/reset confirm`"
         )
 
 
