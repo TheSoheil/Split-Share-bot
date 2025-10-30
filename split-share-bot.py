@@ -3,6 +3,7 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram import Update
+from collections import defaultdict
 import re
 from telegram.ext import (
     Application,
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 # chat_id -> { "members": set[user_id], "expenses": list[dict] }
 GROUPS: dict[int, dict] = {}
 
+
 # ---------- HANDLERS ----------
 async def start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -51,6 +53,8 @@ async def help_cmd(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         "/start — greet\n"
         "/help — this help\n"
         "/join — بزن تا اد بشی تو خرج\n"
+        "/add — بزن تا یه خرجی که خودت کردی رو اضافه کنی\n"
+        
         "More commands coming soon…"
     )
 
@@ -93,7 +97,9 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # 2. parse amount (accept comma or dot)
     amount_str = context.args[0].replace(",", ".")
     if not re.fullmatch(r"\d+(?:\.\d{1,2})?", amount_str):
-        await update.message.reply_text("❗ Amount must be a positive number like 42 or 42.50")
+        await update.message.reply_text(
+            "❗ Amount must be a positive number like 42 or 42.50"
+        )
         return
     amount = float(amount_str)
 
@@ -124,16 +130,93 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def _compute_balances(chat_id: int) -> dict[int, float]:
+    """Return dict user_id → net balance (positive = owed, negative = owes)."""
+    balances: defaultdict[int, float] = defaultdict(float)
+    members = GROUPS[chat_id]["members"]
+    for exp in GROUPS[chat_id]["expenses"]:
+        n = len(exp["split_between"])
+        payer = exp["by"]
+        per_person = exp["amount"] / n
+        # payer is owed by everyone else
+        for uid in exp["split_between"]:
+            if uid == payer:
+                balances[uid] += (n - 1) * per_person
+            else:
+                balances[uid] -= per_person
+    return balances
+
+
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/balance – show running balances."""
-    # TODO
-    await update.message.reply_text("🔧 /balance not implemented yet")
+    """/balance – show current running totals."""
+    chat_id = update.effective_chat.id
+    if chat_id not in GROUPS or not GROUPS[chat_id]["expenses"]:
+        await update.message.reply_text("ℹ️ No expenses yet.")
+        return
+
+    members = GROUPS[chat_id]["members"]
+    balances = _compute_balances(chat_id)
+
+    lines = []
+    for uid, name in members.items():
+        b = balances.get(uid, 0.0)
+        if b > 0:
+            lines.append(f"{name} is owed **{b:.2f}**")
+        elif b < 0:
+            lines.append(f"{name} owes **{-b:.2f}**")
+        else:
+            lines.append(f"{name} — settled ✔️")
+
+    await update.message.reply_text("📊 Current balances:\n" + "\n".join(lines))
+
+
+def _settle_plan(balances: dict[int, float]) -> list[str]:
+    """Return list of 'A pays B xx.xx' strings that zero all balances."""
+    # split into creditors and debtors
+    creditors = [(uid, b) for uid, b in balances.items() if b > 0.01]
+    debtors   = [(uid, -b) for uid, b in balances.items() if b < -0.01]
+
+    creditors.sort(key=lambda x: x[1])   # smallest first
+    debtors.sort(key=lambda x: x[1])     # smallest first
+
+    plan = []
+    while creditors and debtors:
+        c_uid, c_amt = creditors.pop()      # biggest creditor
+        d_uid, d_amt = debtors.pop()        # biggest debtor
+
+        pay = min(c_amt, d_amt)
+        plan.append((d_uid, c_uid, pay))
+
+        c_amt -= pay
+        d_amt -= pay
+        if c_amt > 0.01:
+            creditors.append((c_uid, c_amt))
+            creditors.sort(key=lambda x: x[1])
+        if d_amt > 0.01:
+            debtors.append((d_uid, d_amt))
+            debtors.sort(key=lambda x: x[1])
+
+    return plan
 
 
 async def settle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/settle – compute minimal number of payments to settle."""
-    # TODO
-    await update.message.reply_text("🔧 /settle not implemented yet")
+    """/settle – show minimal payment plan to zero all balances."""
+    chat_id = update.effective_chat.id
+    if chat_id not in GROUPS or not GROUPS[chat_id]["expenses"]:
+        await update.message.reply_text("ℹ️ Nothing to settle.")
+        return
+
+    members = GROUPS[chat_id]["members"]
+    balances = _compute_balances(chat_id)
+
+    # if everyone is already zero
+    if all(abs(b) < 0.01 for b in balances.values()):
+        await update.message.reply_text("✅ Everyone is settled!")
+        return
+
+    plan = _settle_plan(balances)
+    lines = [f"{members[d]} → {members[c]} **{amt:.2f}**" for d, c, amt in plan]
+    await update.message.reply_text("💰 Settle up:\n" + "\n".join(lines))
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
