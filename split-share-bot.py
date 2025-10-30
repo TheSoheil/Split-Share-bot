@@ -40,6 +40,7 @@ async def start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         "Commands:\n"
         "/join — include yourself in the group\n"
         "/add <amount> <note> — record an expense you paid (split equally)\n"
+        "/invite — add offline users as ghosts\n"
         "/balance — show who owes/gets\n"
         "/settle — minimal pay plan\n"
         "/reset — clear data for this chat\n"
@@ -54,6 +55,7 @@ async def help_cmd(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         "/help — بزنی بهت میگم هر دستور چیکارم میکنه\n"
         "/join — بزن تا اد بشی تو خرج\n"
         "/add — بزن تا یه خرجی که خودت کردی رو اضافه کنم\n"
+        "/invite — اگه کسی تو گروه نیست یا آنلاین نیست با این اضافه کن\n"
         "/balance — اینو بزنی میگم کی چقدر بدهکاره کی چقدر طلبکار\n"
         "/settle — بزن تا بهت بگم کی باید چقدر بزنه به کی\n"
         "/reset — بزن تا کل داستان رو حذف کنم\n"
@@ -124,13 +126,13 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     # 6. reply
-    names = [members[uid] for uid in split_between]
+    real_names = [GROUPS[chat_id]["members"].get(uid) or
+                GROUPS[chat_id]["ghosts"].get(uid) for uid in split_between]
     await update.message.reply_text(
-        f"💸 {members[user.id]} paid **{amount:.2f}** for _{note}_\n"
-        f"Split between {len(names)} people → **{per_person:.2f}** each:\n"
-        + ", ".join(names)
+        f"💸 {GROUPS[chat_id]['members'][user.id]} paid **{amount:.2f}** for _{note}_\n"
+        f"Split between {len(real_names)} people → **{per_person:.2f}** each:\n"
+        + ", ".join(real_names)
     )
-
 
 GHOST_SEQ = 0  # global counter for unique ghost ids
 
@@ -277,6 +279,7 @@ def main() -> None:
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("join", join))
     app.add_handler(CommandHandler("add", add))
+    app.add_handler(CommandHandler("invite", invite))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("settle", settle))
     app.add_handler(CommandHandler("reset", reset))
